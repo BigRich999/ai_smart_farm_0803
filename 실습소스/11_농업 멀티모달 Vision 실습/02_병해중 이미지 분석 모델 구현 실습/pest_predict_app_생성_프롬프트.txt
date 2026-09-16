@@ -1,0 +1,43 @@
+병해충 이미지 분석 Streamlit 앱 생성 프롬프트
+================================================================================
+
+아래 요구사항으로 Streamlit 예측 앱(pest_predict_app.py)을 만들어줘.
+
+[목적]
+학습된 best_model.pth 체크포인트로 작물 이미지를 분석하는 웹 앱.
+
+[기능]
+1. 이미지 업로드 (jpg/png)
+2. AutoImageProcessor(또는 ViTImageProcessor)로 pixel_values 생성
+3. best_model.pth 로드 후 forward
+4. 화면에 표시
+   - 작물 / 부위 / 병해충 Top-K
+   - 예측 bbox를 원본 이미지에 빨간색으로 오버레이
+   - bbox 픽셀 좌표(x, y, w, h)
+
+[모델]
+- 백본: Hugging Face transformers ViTModel
+  (기본 model_name: google/vit-base-patch16-224)
+- 클래스명: PestAnalysisModel
+- 헤드 4개: fc_crop, fc_part, fc_disease, fc_bbox(sigmoid)
+- 추론 시 pretrained=False 로 골격만 만들고 state_dict 로드
+
+[체크포인트 best_model.pth 내용]
+- model (state_dict)
+- model_name
+- id2crop / id2part / id2disease
+- num_crops / num_parts / num_diseases
+- image_size
+
+[UI]
+- Streamlit
+- 사이드바: 체크포인트 경로, GPU 사용 여부, Top-K
+- 기본 체크포인트 경로: 앱과 같은 폴더의 best_model.pth
+- 모델은 st.cache_resource 로 캐시
+
+[기타]
+- 로컬에서 python -m streamlit run pest_predict_app.py 로 실행 가능하게
+- requirements_app.txt 도 함께 작성
+  (streamlit, torch, torchvision, transformers, pillow)
+- torchaudio는 넣지 말 것 (torch와 버전 불일치 시 import 오류 유발)
+- transformers import 실패 시 재설치/제거 안내 메시지 출력

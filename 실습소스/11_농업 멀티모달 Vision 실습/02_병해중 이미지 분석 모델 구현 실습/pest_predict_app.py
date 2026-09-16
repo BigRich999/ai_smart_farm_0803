@@ -4,7 +4,13 @@
 사용법:
   1) 노트북에서 학습해 best_model.pth 를 이 폴더(또는 지정 경로)에 둡니다.
   2) pip install -r requirements_app.txt
-  3) streamlit run pest_predict_app.py
+  3) python -m streamlit run pest_predict_app.py
+
+주의:
+  torch / torchaudio 버전이 어긋나면 transformers import 시
+  libtorchaudio 로드 오류가 납니다. 이 앱은 오디오가 필요 없으므로
+  문제가 있으면 다음으로 제거하세요.
+    pip uninstall -y torchaudio
 """
 
 from __future__ import annotations
@@ -15,20 +21,35 @@ import streamlit as st
 import torch
 import torch.nn as nn
 from PIL import Image, ImageDraw
-from transformers import ViTConfig, ViTModel
 
-try:
-    from transformers import AutoImageProcessor as ImageProcessorCls
-except ImportError:
+
+def _import_transformers():
+    """깨진 torchaudio 때문에 transformers가 같이 실패하는 경우를 안내."""
     try:
-        from transformers import ViTImageProcessor as ImageProcessorCls
-    except ImportError as e:
+        from transformers import ViTConfig, ViTModel
+    except OSError as e:
         raise ImportError(
-            "transformers에서 이미지 프로세서를 불러올 수 없습니다.\n"
-            "아래 명령으로 재설치하세요:\n"
-            '  pip install -U "transformers>=4.40.0" torchvision pillow\n'
+            "transformers 로드 중 네이티브 라이브러리 오류가 발생했습니다.\n"
+            "대개 torch와 버전이 다른 torchaudio 때문입니다. 아래를 실행하세요:\n"
+            "  pip uninstall -y torchaudio\n"
             f"원인: {e}"
         ) from e
+
+    try:
+        from transformers import AutoImageProcessor as ImageProcessorCls
+    except ImportError:
+        try:
+            from transformers import ViTImageProcessor as ImageProcessorCls
+        except ImportError as e:
+            raise ImportError(
+                "transformers에서 이미지 프로세서를 불러올 수 없습니다.\n"
+                '  pip install -U "transformers>=4.40.0" torchvision pillow\n'
+                f"원인: {e}"
+            ) from e
+    return ViTConfig, ViTModel, ImageProcessorCls
+
+
+ViTConfig, ViTModel, ImageProcessorCls = _import_transformers()
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CKPT = APP_DIR / "best_model.pth"
