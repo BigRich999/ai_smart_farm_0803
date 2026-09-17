@@ -1,0 +1,614 @@
+객체 탐지(YOLO) 기반 작물 분석 실습 과제
+================================================================================
+
+완숙/미숙 토마토 데이터셋(Ripe and Unripe Tomatoes Dataset.zip)을 사용하여
+Ultralytics YOLO26 객체 탐지 모델을 학습하고, 학습된 가중치를 저장·불러와
+예측한 뒤 숙도 비율로 수확 판정을 수행하는 작물 분석 실습이다.
+
+구현 환경은 Google Colab + GPU (로컬 CUDA GPU도 가능) 이다.
+완성 코드는 이 문서의 설정·출력 형식을 따라야 한다.
+
+
+1. 실습 목표
+--------------------------------------------------------------------------------
+- zip을 풀어 detection/images 와 detection/labels 를 찾는다.
+- YOLO txt 라벨(class xc yc w h, 정규화 좌표)로 메타데이터·EDA를 수행한다.
+- Ultralytics YOLO 형식으로 train/val/test 를 분할하고 data.yaml 을 작성한다.
+- COCO 사전학습 YOLO26n(yolo26n.pt)을 파인튜닝한다.
+- best.pt 를 models/ 폴더에 저장한 뒤, 그 파일만 다시 로드하여 예측한다.
+- test 이미지의 미숙/완숙 개수와 완숙 비율로 수확 판정을 출력한다.
+
+
+2. 제출 및 실행 환경
+--------------------------------------------------------------------------------
+항목            내용
+--------------  ------------------------------------------------
+환경            Google Colab (로컬 Jupyter도 가능)
+런타임          T4 GPU 권장 (런타임 → 런타임 유형 변경)
+제출 파일       Colab/Jupyter 노트북 1개 (.ipynb)
+데이터          Ripe and Unripe Tomatoes Dataset.zip
+라이브러리      ultralytics (YOLO26), PyTorch (이미 설치된 CUDA 버전 사용)
+
+노트북은 위에서부터 순서대로 실행했을 때 오류 없이 동작해야 한다.
+
+주의:
+- PyTorch / torchvision 은 pip 로 설치·업그레이드하지 않는다.
+  이미 설치된 CUDA PyTorch를 그대로 사용한다.
+- Colab matplotlib 한글이 깨지지 않도록 fonts-nanum(NanumGothic)을 설치·적용한다.
+
+
+3. 데이터
+--------------------------------------------------------------------------------
+사용할 zip:
+
+    Ripe and Unripe Tomatoes Dataset.zip
+
+zip 내부 구조(폴더가 한 겹 더 있어도 됨):
+
+    detection/
+     ├─ images/                 # riped_tomato_*.jpeg, unriped_tomato_*.jpeg
+     ├─ labels/                 # YOLO txt (class xc yc w h)
+     └─ coco_annotations.json
+    segmentation/               # 본 실습에서는 사용하지 않음
+
+데이터 규모(이 숫자와 맞아야 함):
+
+    탐지용 이미지 177장, 라벨 177개 (1:1)
+    객체(박스) 약 869개
+    클래스 2종
+
+클래스 (YOLO class id)
+
+    id   영문      한글
+    --   --------  ----
+    0    unripe    미숙
+    1    ripe      완숙
+
+YOLO 라벨 예시 (riped_tomato_1.txt):
+
+    1 0.446946 0.228366 0.122019 0.193065   # ripe
+    0 0.464426 0.636520 0.143270 0.126523   # unripe
+
+한 이미지에 완숙·미숙 객체가 함께 등장할 수 있다.
+파일명(riped_ / unriped_)은 사진 단위 태그이고,
+txt의 class id는 객체 단위 숙도이다. 혼동하지 말 것.
+
+데이터 출처:
+
+    Kaggle — Riped and Unriped Tomato Dataset
+    https://www.kaggle.com/datasets/sumn2u/riped-and-unriped-tomato-dataset/data
+
+
+4. 필수 하이퍼파라미터 (바꾸면 안 됨)
+--------------------------------------------------------------------------------
+항목                         값
+---------------------------  ------------------------------------------
+라이브러리                   ultralytics (from ultralytics import YOLO)
+모델 MODEL_NAME              yolo26n.pt
+입력 크기 imgsz              640
+에폭 epochs                  50
+배치 batch                   GPU 16 / CPU 4
+                             (VRAM < 8GB 이면 8)
+patience                     20
+seed / SEED                  42
+학습/검증/테스트 비율        0.70 / 0.15 / 0.15
+계층 분할                    file_group(ripe/unripe) 기준 stratify
+optimizer                    auto
+close_mosaic                 10
+예측 conf                    0.25
+예측 iou                     0.70
+저장 파일                    models/tomato_yolo26_best.pt
+                             models/tomato_yolo26_last.pt
+실험 이름 name               tomato_yolo26
+프로젝트 project             runs/detect
+
+data.yaml 필수 내용:
+
+    path: {WORK_DIR 절대경로}
+    train: images/train
+    val: images/val
+    test: images/test
+    nc: 2
+    names:
+      0: unripe
+      1: ripe
+
+수확 판정 기준 (바꾸면 안 됨):
+
+    HARVEST_HIGH = 0.70   # 완숙비율 >= 0.70 → 수확 권장
+    HARVEST_MID  = 0.40   # 0.40 ~ 0.70 → 부분 수확
+                          # < 0.40 → 생육 관찰
+                          # 객체 0개 → 객체 없음
+
+YOLOv8 / YOLOv5 / Detectron2 등 다른 탐지 프레임워크는 사용하지 않는다.
+yolo26s.pt 로 바꾸거나 epochs 를 바꾸는 것은 제출본에서 금지한다.
+
+
+5. 과제 문제
+--------------------------------------------------------------------------------
+
+문제 1. 패키지 설치, 한글 폰트, GPU 확인
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1) ultralytics 및 시각화 패키지를 설치한다.
+   PyTorch는 설치하지 않는다.
+
+    %pip install -q "ultralytics>=8.4.0" seaborn scikit-learn pandas pyyaml opencv-python-headless
+
+2) IN_COLAB 을 다음처럼 판별한다.
+
+    try:
+        from google.colab import files, drive
+        IN_COLAB = True
+    except ImportError:
+        IN_COLAB = False
+
+3) Colab에서 시각화 시 한글이 깨지지 않도록 한글 폰트를 설치·적용한다.
+   함수 이름: setup_korean_font()
+
+   Colab(IN_COLAB=True)일 때:
+
+    fonts-nanum 설치 (apt-get)
+    /usr/share/fonts/truetype/nanum/NanumGothic.ttf 를 matplotlib에 등록
+    plt.rc("font", family=...)
+    plt.rcParams["axes.unicode_minus"] = False
+
+   로컬(IN_COLAB=False)일 때는 OS에 설치된 한글 폰트를 찾거나,
+   NanumGothic / Malgun Gothic / AppleGothic 중 사용 가능한 것을 적용한다.
+   폰트를 못 찾으면 경고만 출력하고 계속 진행한다.
+
+   설치·적용 후 아래를 출력한다.
+
+    한글 폰트: NanumGothic  (...경로...)
+
+   (로컬에서 다른 폰트를 쓰면 그 폰트 이름을 출력)
+
+   EDA, 예측 결과 제목 등 한글이 들어가는 모든 그래프는
+   이 폰트 설정이 적용된 뒤에 그려야 한다.
+
+4) select_compute_device() 를 구현한다.
+   - torch.cuda.is_available() 이면 DEVICE=0, USE_CUDA=True
+   - 아니면 DEVICE="cpu", USE_CUDA=False
+   - CUDA일 때 cudnn.benchmark, TF32, set_float32_matmul_precision("high") 를 켠다
+     (함수가 있을 때만)
+
+5) DEVICE, USE_CUDA, gpu_name, vram_gb, USE_GPU(= DEVICE != "cpu") 를 저장한다.
+
+6) 아래 형식으로 출력한다.
+
+    연산 장치     : GPU (cuda:0)   또는 CPU
+    GPU 이름      : ...            (GPU일 때)
+    VRAM          : ... GB         (GPU일 때)
+    PyTorch CUDA  : ...            (GPU일 때)
+    실행 환경     : Google Colab 또는 로컬
+    OS            : ...
+    Ultralytics   : ...
+    PyTorch       : ...
+    Device 인자   : 0 또는 cpu
+    GPU 사용      : True 또는 False
+
+7) (선택·권장) torchvision 이 CPU 빌드여서 CUDA NMS가 없으면
+   Ultralytics TorchNMS 로 대체하는 패치를 넣어도 된다.
+   단, torch / torchvision 을 pip 으로 설치·교체하지 않는다.
+
+
+문제 2. 데이터 zip 준비 및 압축 해제
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+변수 이름을 그대로 사용한다.
+
+    MOUNT_DRIVE = False
+    ZIP_PATH = ""
+    ROOT = Path("/content") if IN_COLAB else Path.cwd()
+    EXTRACT_DIR = ROOT / "tomato-data"
+    WORK_DIR = ROOT / "yolo_tomato"
+    MODEL_DIR = ROOT / "models"
+    RUNS_DIR = ROOT / "runs" / "detect"
+
+    CLASS_ID_TO_EN = {0: "unripe", 1: "ripe"}
+    CLASS_ID_TO_KO = {0: "미숙", 1: "완숙"}
+
+구현 요구사항:
+
+1) MOUNT_DRIVE = True 이면 Colab에서만 drive.mount("/content/drive") 를 호출한다.
+
+2) find_zip_file(explicit_path="") 를 구현한다.
+   - ZIP_PATH 파일이 있으면 그 경로를 사용한다.
+   - 없으면 /content, /content/drive/MyDrive(Colab) 또는 .(로컬)에서 *.zip 을 찾는다.
+   - 파일명에 tomato, tomatoes, ripe, unripe, 토마토 가 들어간 zip을 우선한다.
+
+3) zip을 못 찾고 이미 풀린 데이터도 없으면 Colab에서는 files.upload() 로
+   Ripe and Unripe Tomatoes Dataset.zip 을 받는다.
+
+4) unzip_dataset(zip_path, extract_dir) 로 EXTRACT_DIR 에 압축을 푼다.
+   (zipfile.ZipFile.extractall)
+   이미 detection/images, detection/labels 가 있으면 다시 풀지 않아도 된다.
+
+5) find_detection_root(...) 로 detection/images 와 detection/labels 가
+   함께 있는 폴더를 찾아 DET_ROOT 에 넣는다.
+   IMG_DIR = DET_ROOT / "images"
+   LBL_DIR = DET_ROOT / "labels"
+
+6) 아래를 출력한다.
+
+    사용할 zip : ...
+    파일 크기  : ... MB
+    탐지 데이터 루트: ...
+    이미지 폴더     : ...
+    라벨 폴더       : ...
+
+
+문제 3. EDA — 메타데이터 구축
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+이미지·라벨을 짝지어 DataFrame 두 개를 만든다.
+
+1) parse_yolo_label(txt_path) → list[dict]
+   각 줄에서 cls, xc, yc, w, h, area(=w*h) 를 읽는다.
+
+2) filename_group(stem) → "ripe" | "unripe" | "unknown"
+   파일명에 unriped/unripe 가 있으면 unripe,
+   riped/ripe 가 있으면 ripe.
+
+3) df_img (이미지 단위) 컬럼을 반드시 포함한다.
+
+    컬럼         설명
+    -----------  ------------------------------------------
+    file         파일명
+    stem         확장자 제외
+    path         이미지 절대경로
+    label_path   라벨 txt 경로
+    width        가로(px)
+    height       세로(px)
+    pixels       width * height
+    aspect       width / height
+    n_box        박스 개수
+    n_unripe     class 0 개수
+    n_ripe       class 1 개수
+    has_both     미숙·완숙이 동시에 있으면 1
+    file_group   filename_group 결과
+
+4) df_box (객체/박스 단위) 컬럼을 반드시 포함한다.
+
+    file, file_group, width, height, cls, cls_ko,
+    xc, yc, bw, bh, area_norm, box_w_px, box_h_px
+
+5) 아래를 출력한다.
+
+    이미지 수        : 177
+    라벨 파일 수     : 177
+    객체(박스) 수    : 869
+    라벨 없는 이미지 : 0
+
+이어서 df_img.head() 와 수치형 describe() 를 출력한다.
+
+
+문제 4. EDA — 클래스·이미지 분포
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1) 파일명 그룹 value_counts, 객체 클래스(cls_ko) value_counts,
+   이미지당 박스 수 describe, 완숙+미숙 동시 등장 이미지 수를 출력한다.
+
+2) 한 그림(figsize=(12, 9), 2×2)에 다음을 그린다.
+   - 파일명 기준 이미지 수 (countplot)
+   - 객체 클래스 분포 (countplot, 미숙/완숙)
+   - 이미지당 토마토 객체 수 (histplot)
+   - 한 이미지 안 숙도 혼재 여부 (단일 숙도 / 완숙+미숙 혼재)
+
+제목·축 라벨은 한글을 사용한다. (문제 1 폰트 적용)
+
+
+문제 5. EDA — 이미지 크기·박스 크기·객체 위치
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+한 그림(figsize=(12, 9), 2×2)에 다음을 그린다.
+
+- 이미지 해상도 scatter (width × height)
+- 정규화 박스 면적 분포 histplot (hue=cls_ko)
+- 객체 중심점(xc, yc) kdeplot (hue=cls_ko, y축은 위가 0이 되도록 ylim 조정)
+- 클래스별 박스 면적 boxplot
+
+이어서 이미지 크기 요약과 클래스별 박스 면적 중앙값을 출력한다.
+
+
+문제 6. EDA — 그라운드 트루스 박스 시각화
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1) yolo_to_xyxy(xc, yc, w, h, img_w, img_h) 를 구현한다.
+
+2) draw_gt(img_path, boxes, font) 로 박스를 그린다.
+   - 미숙(0): 녹색
+   - 완숙(1): 빨강
+   - 라벨 텍스트는 한글(미숙/완숙)
+
+3) 다음 세 그룹에서 각각 최대 3장을 샘플링(random_state=42)하여 표시한다.
+   - 완숙 태그 (file_group == "ripe")
+   - 미숙 태그 (file_group == "unripe")
+   - 숙도 혼재 (has_both == 1)
+
+제목 예:
+
+    완숙 태그
+    riped_tomato_12.jpeg  (미숙 2 / 완숙 5)
+
+
+문제 7. EDA — 객체 영역 색상 (숙도 힌트)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1) crop_mean_rgb(img_path, box_row) 로 박스 안 픽셀 평균 R,G,B 와
+   R_ratio = R/(R+G+B) 를 계산한다.
+
+2) 클래스별 최대 250개 박스를 샘플링하여 평균 RGB를 비교한다.
+
+3) 막대그래프(클래스별 평균 R/G/B)와 R_ratio kdeplot 을 그린다.
+
+출력 예:
+
+    객체 크롭 평균 RGB
+              R      G      B  R_ratio
+    cls_ko
+    미숙     ...    ...    ...    ...
+    완숙     ...    ...    ...    ...
+
+(완숙은 R이 크고, 미숙은 G가 상대적으로 큰 경향이 보이면 정상)
+
+
+문제 8. YOLO 학습용 데이터셋 분할
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1) SEED=42, TRAIN_RATIO=0.70, VAL_RATIO=0.15, TEST_RATIO=0.15
+
+2) sklearn.model_selection.train_test_split 으로
+   file_group 을 stratify 하여 train / val / test stem 을 나눈다.
+
+3) WORK_DIR 아래에 Ultralytics 권장 구조로 복사한다.
+
+    yolo_tomato/
+    ├── images/train|val|test
+    ├── labels/train|val|test
+    └── data.yaml
+
+4) data.yaml 을 문제 4절의 필수 형식으로 저장한다.
+
+5) 아래를 출력한다.
+
+    {'train': ..., 'val': ..., 'test': ...}
+    (yaml 내용 전체)
+    저장: .../data.yaml
+    train  images=...  labels=...
+    val    images=...  labels=...
+    test   images=...  labels=...
+
+train+val+test 이미지 합은 177이어야 한다.
+
+
+문제 9. YOLO26 학습
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1) 변수를 그대로 사용한다.
+
+    MODEL_NAME = "yolo26n.pt"
+    EPOCHS = 50
+    IMGSZ = 640
+    BATCH = 16 if USE_GPU else 4
+    # VRAM < 8GB 이면 BATCH = 8
+    PATIENCE = 20
+    WORKERS = 2 if IN_COLAB else 0
+
+2) 학습 시작 전 아래를 출력한다.
+
+    모델    : yolo26n.pt
+    epochs  : 50
+    imgsz   : 640
+    batch   : ...
+    device  : ...  (...)
+    GPU사용 : True 또는 False
+    workers : ...
+
+3) YOLO(MODEL_NAME).train(...) 을 호출한다.
+   필수 인자:
+
+    data=str(yaml_path)
+    epochs=EPOCHS
+    imgsz=IMGSZ
+    batch=BATCH
+    device=DEVICE
+    workers=WORKERS
+    project=str(RUNS_DIR)
+    name="tomato_yolo26"
+    exist_ok=True
+    patience=PATIENCE
+    plots=True
+    pretrained=True
+    optimizer="auto"
+    seed=SEED
+    close_mosaic=10
+    amp=USE_GPU
+
+4) 학습이 끝나면 아래를 출력한다.
+
+    학습 결과 폴더: .../runs/detect/tomato_yolo26
+
+가중치는 다음 경로에 생성되어야 한다.
+
+    .../runs/detect/tomato_yolo26/weights/best.pt
+    .../runs/detect/tomato_yolo26/weights/last.pt
+
+
+문제 10. 학습 곡선·혼동 행렬 확인
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+save_dir = Path(train_results.save_dir) 에서 아래 파일이 있으면 노트북에 표시한다.
+
+    results.png
+    confusion_matrix.png
+    confusion_matrix_normalized.png
+    F1_curve.png
+    PR_curve.png
+    P_curve.png
+    R_curve.png
+    labels.jpg
+
+없는 파일은 "없음: {파일명}" 을 출력한다.
+
+
+문제 11. 학습된 모델 저장 및 검증
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1) MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+2) best.pt / last.pt 를 아래 이름으로 복사한다.
+
+    models/tomato_yolo26_best.pt
+    models/tomato_yolo26_last.pt
+
+3) 복사 경로와 best 파일 크기(MB)를 출력한다.
+
+4) 저장본으로 검증한다.
+
+    val_model = YOLO(str(SAVED_BEST))
+    val_metrics = val_model.val(data=str(yaml_path), imgsz=IMGSZ, device=DEVICE, split="val")
+
+5) 아래를 출력한다.
+
+    === 저장 모델 검증 (val) ===
+    mAP50     : 0.xxxx
+    mAP50-95  : 0.xxxx
+    Precision : 0.xxxx
+    Recall    : 0.xxxx
+
+숫자 자체는 GPU/버전에 따라 달라질 수 있다. 채점은 형식과 동작을 본다.
+
+
+문제 12. 저장 모델 불러와서 예측
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1) 학습 객체와 분리하여 디스크 가중치만 사용한다.
+
+    predict_model = YOLO(str(SAVED_BEST))
+
+2) CONF=0.25, IOU=0.70
+
+3) WORK_DIR/images/test 전체에 대해 predict 한다.
+   save=True, project=RUNS_DIR, name="tomato_yolo26_predict", exist_ok=True
+
+4) 아래를 출력한다.
+
+    로드한 모델: .../models/tomato_yolo26_best.pt
+    클래스     : {0: 'unripe', 1: 'ripe'}
+    예측 이미지 수: ...
+    결과 저장     : ...
+
+5) show_predictions(results, n=6) 로 test 예측 결과 6장을 표시한다.
+   제목에 파일명과 미숙/완숙 개수를 넣는다.
+
+    Test  unriped_tomato_20.jpeg
+    미숙 9 / 완숙 0
+
+
+문제 13. 작물 분석 — 숙도 비율·수확 판정
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1) harvest_decision(ripe_ratio) 를 구현한다.
+   - nan → "객체 없음"
+   - >= 0.70 → "수확 권장"
+   - >= 0.40 → "부분 수확"
+   - 그 외 → "생육 관찰"
+
+2) 각 예측 결과에 대해 DataFrame 을 만든다.
+
+    컬럼: file, 미숙, 완숙, 전체, 완숙비율, 평균confidence, 판정
+
+3) 완숙비율 내림차순으로 표를 출력한다.
+
+4) test 세트 합계를 출력한다.
+
+    === test 세트 합계 ===
+    미숙 객체 : ...
+    완숙 객체 : ...
+    완숙 비율 : 0.xxx
+    (판정 value_counts)
+
+5) 이미지별 미숙/완숙 stacked bar 와 판정 countplot 을 그린다.
+
+
+문제 14. 단일 이미지 추론 (저장 모델 재사용)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1) test 폴더의 첫 번째 이미지를 고른다.
+
+2) YOLO(str(SAVED_BEST)) 로 다시 로드한 뒤 한 장만 predict 한다.
+   name="tomato_yolo26_single"
+
+3) 탐지 결과를 DataFrame 으로 출력한다.
+
+    class_id, class_en, class_ko, confidence, x1, y1, x2, y2
+
+4) annotated 이미지를 표시한다.
+
+5) 아래를 출력한다.
+
+    저장된 가중치 경로
+      .../models/tomato_yolo26_best.pt
+    다시 불러오는 코드
+      from ultralytics import YOLO
+      model = YOLO(r".../models/tomato_yolo26_best.pt")
+      model.predict("이미지경로.jpg", save=True)
+
+
+6. 채점 기준
+--------------------------------------------------------------------------------
+배점   항목      확인 내용
+----   --------  ----------------------------------------------------------
+10     환경      ultralytics 설치, 한글 폰트, GPU/CPU 자동 선택,
+                 PyTorch 재설치 금지
+15     데이터    zip 해제, detection/images·labels 탐색, 177장 매칭
+20     EDA       메타데이터, 분포/해상도/GT박스/색상 그래프(한글 깨짐 없음)
+15     분할      train/val/test 70/15/15, stratify, data.yaml(nc=2)
+20     학습      yolo26n.pt, epochs=50, imgsz=640, seed=42,
+                 models/tomato_yolo26_best.pt 저장
+20     예측·분석 저장본 재로드, test 예측, 숙도비율·수확판정, 단일 추론
+
+감점 예시:
+
+- yolo26n.pt 가 아닌 YOLOv8/v5 등 다른 모델 사용
+- epochs, seed, 분할 비율을 임의로 변경
+- best.pt 를 저장하지 않고 메모리 모델만으로 예측
+- data.yaml 의 names/nc 가 틀림
+- EDA 없이 바로 학습만 수행
+- Colab에서 한글 폰트를 적용하지 않아 그래프 한글이 깨짐
+- torch/torchvision 을 pip 으로 강제 재설치
+- segmentation 폴더만 사용하고 detection 라벨을 무시
+
+
+7. 구현 시 주의사항
+--------------------------------------------------------------------------------
+- 학습 전에 GPU 런타임을 선택한다. (로컬도 CUDA GPU 권장)
+- 첫 실행 시 yolo26n.pt 를 자동 다운로드한다. 네트워크가 필요하다.
+- Colab matplotlib 기본 폰트는 한글을 지원하지 않는다.
+  문제 1에서 fonts-nanum(NanumGothic)을 설치·등록한 뒤 EDA를 그린다.
+  런타임을 다시 시작하면 폰트 설치 셀을 다시 실행해야 한다.
+- zip 파일명에 공백이 있어도 경로로 처리할 수 있어야 한다.
+- 파일명 태그(riped_/unriped_)와 객체 class id(0/1)를 혼동하지 않는다.
+- Windows Jupyter 에서는 WORKERS=0 이 안정적이다.
+- torchvision 이 CPU 빌드이면 GPU NMS에서 NotImplementedError 가 날 수 있다.
+  TorchNMS 대체 패치로 해결하되, PyTorch 재설치는 하지 않는다.
+- 클래스 이름, 출력 문구, 하이퍼파라미터는 이 문서에 적힌 그대로 사용한다.
+- mAP 숫자 자체는 GPU/라이브러리 버전에 따라 조금 달라질 수 있다.
+  채점은 설정과 출력 형식, 동작을 본다.
+- 제출물에 데이터 출처(Kaggle Ripe and Unripe Tomato Dataset)를 남긴다.
+
+
+8. 참고: 데이터 요약
+--------------------------------------------------------------------------------
+이미지
+    전체 177장
+    파일명 ripe 태그 약 97장 / unripe 태그 약 80장
+
+객체(박스)
+    unripe(0) 약 440개 / ripe(1) 약 429개
+    이미지당 박스 수: 최소 1, 최대 22, 평균 약 4.9
+
+YOLO 디렉터리 (분할 후)
+
+    yolo_tomato/
+    ├── images/
+    │   ├── train/
+    │   ├── val/
+    │   └── test/
+    ├── labels/
+    │   ├── train/
+    │   ├── val/
+    │   └── test/
+    └── data.yaml
+
+학습 산출물
+
+    runs/detect/tomato_yolo26/weights/best.pt
+    models/tomato_yolo26_best.pt   ← 예측 시 이 파일만 로드
