@@ -1,0 +1,42 @@
+토마토 숙도 작물 분석 Streamlit 앱 생성 프롬프트
+================================================================================
+
+아래 요구사항으로 Streamlit 예측 앱(tomato_predict_app.py)을 만들어줘.
+
+[목적]
+학습된 YOLO26 best.pt로 토마토 이미지를 분석하는 웹 앱.
+미숙/완숙 객체를 탐지하고 완숙비율로 수확 판정을 보여 준다.
+
+[기능]
+1. 이미지 업로드 (jpg/png) — 있으면 yolo_tomato/images/test 샘플 선택도 가능
+2. ultralytics.YOLO(best.pt) 로드 후 predict
+3. 화면에 표시
+   - 탐지 박스가 그려진 이미지
+   - 미숙 / 완숙 / 전체 개수, 완숙비율, 수확 판정
+   - 객체별 class_ko, confidence, xyxy 표
+
+[모델·가중치]
+- Ultralytics YOLO26 (from ultralytics import YOLO)
+- 기본 경로: models/tomato_yolo26_best.pt
+- 클래스: 0=unripe(미숙), 1=ripe(완숙)
+- torch / torchvision 은 pip 으로 설치·업그레이드하지 말 것
+
+[수확 판정]
+- HARVEST_HIGH=0.70 → 수확 권장
+- HARVEST_MID=0.40  → 부분 수확
+- 그 미만 → 생육 관찰 / 탐지 0개 → 객체 없음
+
+[UI]
+- Streamlit, layout=wide
+- 사이드바: 가중치 경로, GPU 사용, conf(기본 0.25), iou(0.70), imgsz(640)
+- 모델은 st.cache_resource 로 캐시
+
+[색상 주의]
+- predict source는 PIL(RGB)로 넣을 것 (np.ndarray는 BGR로 해석됨)
+- 결과 표시는 plot(pil=True) 또는 BGR→RGB 변환 후 st.image
+
+[기타]
+- python -m streamlit run tomato_predict_app.py 로 실행
+- requirements_app.txt 함께 작성 (streamlit, ultralytics, pandas, pillow, numpy)
+  torch는 requirements에 넣지 말 것
+- torchvision CPU 빌드면 CUDA NMS 실패 가능 → Ultralytics TorchNMS 대체(선택)
