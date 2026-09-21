@@ -1,0 +1,62 @@
+[실습 2]
+
+RDS DB 생성시 EC2와 같은 가용 영역을 선택해준다
+자격 증명 관리는 자체 관리를 선택하여 암호를 직접 입력하여 DB를 생성한다
+
+EC2 인스턴스 생성시 : 
+고급 세부 정보 -> 메타데이터 버전 : "V1및 V2" 로 선택해서 메타 정보 확인이 가능하도록 해준다
+메타데이터에서 태그 허용:활성화
+AP-SG 보안 그룹에  인바운드 규칙에 SSH 접속(포트 22) 0.0.0.0/0을 추가 해준다 (SSH로 연결하여 오류 디버깅)
+EC2가 완전히 실행 된 후에 웹브라우저에서 접속한다
+
+- Web Server 접속 안될때 html 파일 임시로 만들어서 접속해본다(테스트후 바로 삭제한다)
+echo "Hello World" | sudo tee /var/www/html/index.html
+
+- DB 접속 안될때 직접 접속해본다
+mysql -h <RDS DB의 Endpoint> -u dbadmin -p
+
+mysql -h inventory-db.csliky8emj1w.us-east-1.rds.amazonaws.com -u dbadmin -p
+SHOW DATABASES;
+USE inventory;
+SHOW TABLES;
+
+
+[실습 3]
+Cloudformation 수행시 arc_lab3_template.json템플릿에서 아래와 같이
+db.t2.micro를 db.t3.micro로 수정해서 사용한다
+"RDSDatabase": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "DBName": "inventory",
+        "DBInstanceIdentifier": "inventory-db",
+        "AllocatedStorage": "5",
+        "DBInstanceClass": "db.t3.micro",
+        "Engine": "MySQL",
+
+EC2 인스턴스 생성시 : 
+고급 세부 정보 -> 메타데이터 버전 : "V1및 V2" 로 선택해서 메타 정보 확인이 가능하도록 해준다
+메타데이터에서 태그 허용:활성화
+
+[실습 4]
+Cloudformation 수행시 arc_lab4_template.json템플릿에서 아래와 같이
+db.t2.micro를 db.t3.micro로 수정해서 사용한다
+"RDSDatabase": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "DBName": "inventory",
+        "DBInstanceIdentifier": "inventory-db",
+        "AllocatedStorage": "5",
+        "DBInstanceClass": "db.t3.micro",
+        "Engine": "MySQL",
+
+EC2-> 시작 템플릿 생성시 : 
+네트워크 설정->서브넷 : 시작템플릿에 포함하지 않음
+
+고급 세부 정보 -> 메타데이터 버전 : "V1및 V2" 로 선택해서 메타 정보 확인이 가능하도록 해준다
+메타데이터에서 태그 허용:활성화
+
+[실습 5]
+작업 3: 스택 업데이트 에서
+스택업데이트 -->직접 업데이트 -->기존 템플릿 교체-->템플릿 파일 업로드-->lab-application2.yaml 업로드
+작업 4: AWS CloudFormation Designer  --> 인프라 컴포저로 메뉴 변경됨
+실제 내용 변경 실습 없음
