@@ -30,7 +30,7 @@ https://catalog.us-east-1.prod.workshops.aws/workshops/6d30487a-48e1-4631-b6bc-5
 CodeServerPassword 와 KeyPair 를 반드시 입력한다. 예) CodeServerPassword: mypassword ,  KeyPair: vscode-ec2-key
 <br>
 
-<4> AWS IoT Events Workshop (English)
+<4> AWS IoT Events Workshop (English) : 접속안됨
 </br>
 https://catalog.us-east-1.prod.workshops.aws/workshops/0ed0682f-4a00-4331-84ba-93fccc8b96ad/en-US
 </br>
