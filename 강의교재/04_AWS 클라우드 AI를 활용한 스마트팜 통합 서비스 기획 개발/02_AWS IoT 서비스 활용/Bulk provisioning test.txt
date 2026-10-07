@@ -1,0 +1,9 @@
+for i in {1..20}; do
+  THING_NAME=bulky$i
+  mosquitto_pub --cafile ~/root.ca.bundle.pem \
+  --cert $THING_NAME.crt --key $THING_NAME.key \
+  -h $IOT_ENDPOINT -p 8883 -q 0 -t iot/ws \
+  -i $THING_NAME --tls-version tlsv1.2 \
+  -m "{\"prov\": \"bulky$i\", \"date\": \"$(date)\"}" -d
+  echo $i
+done
